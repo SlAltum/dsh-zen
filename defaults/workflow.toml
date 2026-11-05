@@ -1,0 +1,69 @@
+# 状态集是常量（见 src/domain.rs），本文件只收窄允许的转换并声明视图。
+# `from = "*"` 表示任意非终态。
+
+[[transitions]]
+from = "todo"
+to = "wip"
+
+[[transitions]]
+from = "wip"
+to = "done"
+guard = ["acceptance_all_checked", "artifact_present"]
+effects = ["release_lease"]
+
+[[transitions]]
+from = "wip"
+to = "blocked"
+effects = ["release_lease"]
+
+[[transitions]]
+from = "blocked"
+to = "wip"
+guard = ["block_reason_cleared"]
+
+[[transitions]]
+from = "wip"
+to = "todo"
+effects = ["release_lease"]
+
+[[transitions]]
+from = "*"
+to = "dropped"
+effects = ["release_lease"]
+
+# 视图是配置数据：名字 → 领域谓词 + 列集。视图层没有独立布尔逻辑。
+
+[[views]]
+name = "ready"
+predicate = "ready"
+columns = ["id", "title", "priority", "plan"]
+
+[[views]]
+name = "mine"
+predicate = "mine"
+columns = ["id", "title", "status"]
+
+[[views]]
+name = "blocked"
+predicate = "blocked"
+columns = ["id", "title", "block_reason"]
+
+[[views]]
+name = "backlog"
+predicate = "backlog"
+columns = ["id", "title", "priority"]
+
+[[views]]
+name = "stale"
+predicate = "stale"
+columns = ["id", "title", "updated_at"]
+
+[[views]]
+name = "review"
+predicate = "review"
+columns = ["id", "title", "reviewed_at"]
+
+[tunables]
+lease_ttl_minutes = 30
+review_after_days = 7
+stale_after_days = 14

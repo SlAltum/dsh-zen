@@ -1,0 +1,81 @@
+# 角色是职责包；权限按转移授权，不按动作授权。
+
+[roles.planner]
+duty = "拆计划与任务、设优先级、消费积压"
+workdir = "."
+ttl_minutes = 30
+tools = ["read", "plan", "priority"]
+
+[roles.implementer]
+duty = "认领、执行、勾验收、挂产物"
+workdir = "."
+ttl_minutes = 30
+tools = ["read", "write", "exec"]
+
+[roles.reviewer]
+duty = "定期扫描已完成任务，产出新任务"
+workdir = "."
+ttl_minutes = 15
+tools = ["read"]
+
+[roles.tester]
+duty = "验证产物、标记失败"
+workdir = "."
+ttl_minutes = 30
+tools = ["read", "exec"]
+
+[roles.lead]
+duty = "统筹：配置变更、强制释放、重开终态"
+workdir = "."
+ttl_minutes = 30
+tools = ["read", "write", "exec", "admin"]
+
+# 授予表：actor → 角色。`*` 表示任何 actor。
+[grants]
+lead = ["*"]
+planner = ["*"]
+implementer = ["*"]
+reviewer = ["*"]
+tester = ["*"]
+
+# 转移授权，逐格对应 SRS §4.2。
+# `roles` 是直接授权；`holders` 表示必须是该任务的租约持有者。
+# 重开终态等特例由命令层单独判定。
+[[permissions]]
+transition = "todo→wip"
+roles = ["planner", "implementer", "reviewer", "tester", "lead"]
+
+[[permissions]]
+transition = "wip→done"
+roles = ["lead"]
+holders = ["implementer", "tester"]
+
+[[permissions]]
+transition = "wip→blocked"
+roles = ["lead"]
+holders = ["implementer", "tester"]
+
+[[permissions]]
+transition = "blocked→wip"
+roles = ["planner", "lead"]
+holders = ["implementer", "tester"]
+
+[[permissions]]
+transition = "wip→todo"
+roles = ["planner", "lead"]
+holders = ["implementer"]
+
+[[permissions]]
+transition = "*→dropped"
+roles = ["planner", "lead"]
+holders = ["implementer"]
+
+# 角色 → 上下文包字段集。未知角色拒绝，不回落全量。
+# 角色 → 上下文包字段集。R25 的四项（计划摘要 plan / 直接依赖 deps / 验收 acceptance / 关联 links）
+# 每个角色都要有，差异靠额外字段（artifacts、block_reason）体现。未知角色拒绝，不回落全量。
+[context_sections]
+planner = ["id", "title", "status", "description_excerpt", "plan", "acceptance", "deps", "links"]
+implementer = ["id", "title", "status", "description_excerpt", "plan", "acceptance", "deps", "links", "artifacts"]
+reviewer = ["id", "title", "status", "description_excerpt", "plan", "acceptance", "deps", "links", "artifacts"]
+tester = ["id", "title", "status", "description_excerpt", "plan", "acceptance", "deps", "links", "artifacts"]
+lead = ["id", "title", "status", "description_excerpt", "plan", "acceptance", "deps", "links", "block_reason"]

@@ -1,0 +1,4 @@
+- insert:
+    - id: dsh-zen
+      name: '@local/dsh-plugin-zen'
+      config: {}

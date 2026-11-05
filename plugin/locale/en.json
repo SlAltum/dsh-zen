@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Task board (dsh-zen)",
+    "description": "A local task board the model drives with 25 zen_* tools: plans, leases, guards, reviews, snapshots, and imports."
+  }
+}

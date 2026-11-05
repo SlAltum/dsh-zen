@@ -1,0 +1,21 @@
+# 工作项类型与字段方案的绑定。新增类型不需要改代码。
+
+[[types]]
+name = "task"
+label = "任务"
+fields = []
+
+[[types]]
+name = "bug"
+label = "缺陷"
+fields = ["severity"]
+
+[[types]]
+name = "subtask"
+label = "子任务"
+fields = []
+
+[[types]]
+name = "research"
+label = "调研"
+fields = ["outcome"]

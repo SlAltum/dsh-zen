@@ -1,0 +1,18 @@
+/target
+
+# 临时探针与中间产物
+.tmp-*
+
+# 插件包内的二进制由 tools/build-plugin.sh 生成，随包分发但不入库
+plugin/bin/
+
+# agent 草稿区（架构文档与规格在根目录，不在这里）
+.context/
+
+# dsh-zen 在被管理仓库里生成的数据
+.dsh-zen/zen.zendb*
+.dsh-zen/diag.log
+.dsh-zen/.restore.lock
+
+# 误展开的系统变量目录（历史误提交过一次 Windows 缓存库）
+/%SystemDrive%/
