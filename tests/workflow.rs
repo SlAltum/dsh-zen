@@ -39,7 +39,8 @@ fn 临时仓库(tag: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("dsh-zen-flow-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
-    let (ok, 文本) = 跑(&root, &["init"]);
+    std::fs::create_dir_all(root.join(".git")).unwrap();
+    let (ok, 文本) = 跑(&root, &["init", "--root", "."]);
     assert!(ok, "init 失败：{文本}");
     root
 }

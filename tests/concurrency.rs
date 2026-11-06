@@ -20,7 +20,7 @@ fn 跑(dir: &Path, args: &[&str]) -> (bool, String) {
 fn 临时仓库(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("dsh-zen-conc-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(dir.join(".git")).unwrap();
     let (ok, out) = 跑(&dir, &["init", "--root", "."]);
     assert!(ok, "init 失败：{out}");
     dir

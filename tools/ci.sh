@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一次跑完三道闸门：单测（含并发与端到端）、插件对账、规格一致性。
+# 一次跑完四道闸门：单测（含并发与端到端）、发布构建、插件对账、规格一致性。
 # 任何一道不过就以非零退出。CI 与本地都用它，避免两边跑的东西不一样。
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -18,6 +18,9 @@ step() {
 }
 
 step "$cargo_bin" test --quiet
+# 发布构建：cargo test 只编 debug 配置，README 里发布的却是 release 产物。
+# 插件包内的二进制由这一步产出（.gitignore 排除，按平台各自构建）。
+step bash tools/build-plugin.sh
 # 快照不入库：先导出一次，插件自检才有真数据可解析
 step "$node_bin" tools/check-plugin.mjs
 step bash tools/check-spec.sh

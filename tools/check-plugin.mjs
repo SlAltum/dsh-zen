@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // 插件自检：加载 entry、模拟 ctx、核对工具名与内核 rpc 分支一致、校验参数 schema 形状。
 // 跑法：node tools/check-plugin.mjs
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -9,10 +10,14 @@ const 根 = join(dirname(fileURLToPath(import.meta.url)), '..')
 const 插件 = await import(pathToFileURL(join(根, 'plugin', 'index.js')).href)
 
 const 注册 = []
+const 选项 = []
+const 技能 = []
+const 段 = []
 const ctx = {
   tools: {
-    register(definition) {
+    register(definition, options = {}) {
       注册.push(definition)
+      选项.push(options)
       return () => {}
     },
   },
@@ -20,8 +25,19 @@ const ctx = {
   effect(回调) {
     return 回调()
   },
-  // 这个上下文不提供任何服务：inject 不回调，等价于没有 webServer 的 headless profile
-  inject() {},
+  // 只提供 skills 一个服务；webServer 等其余服务缺席，等价于没有 web 面的 headless profile
+  inject(服务们, 回调) {
+    if (!Array.isArray(服务们)) return
+    if (服务们.includes('skills')) {
+      回调({ skills: { register(定义) { 技能.push(定义); return () => {} } }, effect: (fn) => fn() })
+    }
+    if (服务们.includes('systemPrompt')) {
+      回调({
+        get: (名) => (名 === 'systemPrompt' ? { section(定义) { 段.push(定义); return () => {} } } : undefined),
+        effect: (fn) => fn(),
+      })
+    }
+  },
   get() {
     return undefined
   },
@@ -40,6 +56,64 @@ const 缺 = 内核.map((n) => `zen_${n}`).filter((n) => !插件工具.includes(n
 const 多 = 插件工具.filter((n) => !内核.includes(n.slice(4)))
 if (缺.length) 失败.push(`插件缺工具：${缺.join(', ')}`)
 if (多.length) 失败.push(`插件多出内核没有的工具：${多.join(', ')}`)
+
+// 技能：按需加载是它存在的理由，所以名字、路由描述与正文都必须是给模型看的真内容。
+if (技能.length !== 1) 失败.push(`应当注册 1 个技能，实际 ${技能.length}`)
+for (const 一个 of 技能) {
+  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(一个.name)) 失败.push(`技能名不是 kebab-case：${一个.name}`)
+  if ((一个.description ?? '').length < 10) 失败.push('技能缺路由描述')
+  if ((一个.whenToUse ?? '').length < 10) 失败.push('技能缺 whenToUse')
+  if ((一个.content ?? '').length < 200) 失败.push('技能正文过短，像是占位')
+  for (const 必须提到 of ['zen_init', 'zen_move', 'zen_accept']) {
+    if (!(一个.content ?? '').includes(必须提到)) 失败.push(`技能正文没提 ${必须提到}`)
+  }
+}
+
+// 按需暴露：init/schema 常驻，其余 23 个带 when；when 本身按"仓库里有没有 .dsh-zen"判。
+const 常驻 = new Set(['zen_init', 'zen_schema'])
+for (const [i, 工具] of 注册.entries()) {
+  const 有when = typeof 选项[i]?.when === 'function'
+  if (常驻.has(工具.name) && 有when) 失败.push(`${工具.name} 应常驻，不该带 when`)
+  if (!常驻.has(工具.name) && !有when) 失败.push(`${工具.name} 没有 when，会在没有看板的仓库里白占上下文`)
+}
+{
+  const { 有看板 } = await import(pathToFileURL(join(根, 'plugin', 'index.js')).href)
+  const 临 = join(tmpdir(), `dsh-zen-gate-${process.pid}`)
+  rmSync(临, { recursive: true, force: true })
+  mkdirSync(join(临, 'repo', '.git'), { recursive: true })
+  mkdirSync(join(临, 'repo', 'a', 'b'), { recursive: true })
+  if (有看板(join(临, 'repo'))) 失败.push('没初始化 .dsh-zen 的仓库不该被判为有看板')
+  mkdirSync(join(临, 'repo', '.dsh-zen'), { recursive: true })
+  if (!有看板(join(临, 'repo'))) 失败.push('有 .dsh-zen 的仓库应判为有看板')
+  if (!有看板(join(临, 'repo', 'a', 'b'))) 失败.push('子目录应向上找到仓库根的 .dsh-zen')
+  mkdirSync(join(临, 'bare'), { recursive: true })
+  if (有看板(join(临, 'bare'))) 失败.push('不在仓库里的目录不该被判为有看板')
+  rmSync(临, { recursive: true, force: true })
+}
+
+// 条件化的系统提示：没看板的仓库必须给空串（渲染阶段丢弃整个 section），有看板才给引导。
+{
+  const 引导段 = 段.filter((一个) => 一个.name === 'tool:dsh-zen')
+  if (引导段.length !== 1) 失败.push(`应当注册 1 个 tool:dsh-zen 段，实际 ${引导段.length}`)
+  const 一段 = 引导段[0]
+  if (一段) {
+    if (!Number.isFinite(一段.order)) 失败.push('tool:dsh-zen 段缺有限 order')
+    if (typeof 一段.text !== 'function') 失败.push('tool:dsh-zen 段必须是 provider，才能按仓库判空')
+    else {
+      const 临 = join(tmpdir(), `dsh-zen-prompt-${process.pid}`)
+      rmSync(临, { recursive: true, force: true })
+      mkdirSync(join(临, 'repo', '.git'), { recursive: true })
+      mkdirSync(join(临, 'bare'), { recursive: true })
+      const 造 = (cwd) => ({ session: { header: { cwd } } })
+      if (一段.text({ agent: 造(join(临, 'repo')) }) !== '') 失败.push('没有 .dsh-zen 的仓库必须给空串')
+      if (一段.text({ agent: undefined }) !== '') 失败.push('拿不到 agent 时必须给空串')
+      mkdirSync(join(临, 'repo', '.dsh-zen'), { recursive: true })
+      const 文本 = 一段.text({ agent: 造(join(临, 'repo')) })
+      if (!文本.includes('zen_list') || !文本.includes('zen_move')) 失败.push('有看板时引导要讲下一步调什么')
+      rmSync(临, { recursive: true, force: true })
+    }
+  }
+}
 
 const 类型白名单 = new Set(['object', 'array', 'string', 'number', 'integer', 'boolean', 'null'])
 for (const 工具 of 注册) {
@@ -135,4 +209,4 @@ if (失败.length) {
   for (const 项 of 失败) console.error('  - ' + 项)
   process.exit(1)
 }
-console.log(`插件自检通过：${插件工具.length} 个工具与内核 rpc 一一对应，参数 schema 合法；client 挂载 3 个槽位`)
+console.log(`插件自检通过：${插件工具.length} 个工具与内核 rpc 一一对应，参数 schema 合法；技能「${技能[0]?.name}」按需注册；client 挂载 3 个槽位`)

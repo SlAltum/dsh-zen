@@ -113,8 +113,8 @@ const 操作者说明 = '操作者身份，缺省按 ZEN_ACTOR → git 邮箱 �
 const TOOLS = [
   {
     name: 'init',
-    description: '在当前仓库建立 .dsh-zen 数据目录、四份默认配置与空库。已存在的文件跳过，不覆盖。首次使用前调用一次。',
-    params: { root: { type: 'string', description: '仓库根目录，省略用当前工作目录。' } },
+    description: '在指定的项目根建立 .dsh-zen 数据目录、四份默认配置与空库。这是唯一会创建 .dsh-zen 的动作；已存在的文件跳过，不覆盖。首次使用前调用一次。',
+    params: { root: { type: 'string', required: true, description: '项目根目录的绝对路径（或相对当前目录）。必填；祖先目录已有看板时拒绝。' } },
   },
   {
     name: 'create',
@@ -352,7 +352,7 @@ function zenRpc(bin, requests, cwd) {
 async function 读看板(bin, root) {
   let cwd
   if (root !== undefined && root !== '') {
-    if (!isAbsolute(root) || !existsSync(root)) throw new Error(`仓库根不存在或不是绝对路径：${root}`)
+    if (!isAbsolute(root) || !existsSync(root)) throw new Error(`项目根不存在或不是绝对路径：${root}`)
     cwd = root
   }
   const [list, stats, log] = await zenRpc(bin, [
@@ -400,9 +400,97 @@ async function 读看板(bin, root) {
   return { rows, total: list.data.total ?? rows.length, stats: stats.data ?? {}, events: log.ok ? (log.data.events ?? []) : [], 计划详情, at: new Date().toISOString() }
 }
 
+/** 技能正文：模型按需加载后才读到这些工作流，不常驻系统提示。 */
+const 技能正文 = `# dsh-zen 任务看板
+
+项目根存在 \`.dsh-zen/\` 时，任务、计划、验收、租约都在这套工具里，不另开 todo 列表或 Markdown 计划文档。
+
+## 何时用
+
+- 会话开始且 \`.dsh-zen/\` 已存在：\`zen_list(view=ready)\` 取就绪队列。
+- 需要跨会话跟踪的事（可能被别人接手、多轮才完成、要留验收）：建任务。
+- 一次性的读文件、跑命令、灵光一现：不建任务。
+
+## 没有 \`.dsh-zen/\` 时
+
+要做看板时才创建：\`zen_init(root)\`。**项目根显式给**，与 IDE 打开项目一致；祖先目录已有看板时拒绝。结果里的 \`root\` 是实际落点。
+
+## 一次完整循环
+
+1. \`zen_list(view=ready)\` 选一条
+2. \`zen_move(id, to=wip, role=implementer)\` 占用，租约随之生效
+3. 干活，关键判断用 \`zen_comment\` 留痕
+4. \`zen_artifact(id, kind=file|commit|url|note, ref=…)\` 挂产物
+5. \`zen_accept(id, ordinal)\` 逐条勾验收；有未勾的条目时 \`done\` 会被拒
+6. \`zen_move(id, to=done)\`
+
+## 硬规则
+
+- 写操作都带 role，缺省 implementer；改优先级与正文只有 planner / lead 能做。
+- 进 blocked 必须给 reason；离开 wip 自动释放租约。
+- \`zen_board\`、\`zen_stats\` 是人读的，不要放进 agent 主路径。
+- 报错码就是语义（permission / guard / lease / conflict / config / validation）：先读码再改动作。
+`
+
+const 技能 = {
+  name: 'dsh-zen',
+  description: '用 zen_* 工具管理本项目的任务看板：计划、任务、租约、验收、复盘。',
+  whenToUse: '项目根存在 .dsh-zen/ 时；或用户要求跨会话跟踪任务、计划、验收时。',
+  content: 技能正文,
+}
+
+/** 内核 `find_data_dir` 的同款规则：向上找 `.dsh-zen`，撞到 `.git` 即停。 */
+export function 有看板(cwd) {
+  if (typeof cwd !== 'string' || cwd === '') return false
+  let dir = cwd
+  for (;;) {
+    if (existsSync(join(dir, '.dsh-zen'))) return true
+    if (existsSync(join(dir, '.git'))) return false
+    const 父 = dirname(dir)
+    if (父 === dir) return false
+    dir = 父
+  }
+}
+
+/**
+ * 有看板时才出现的系统提示：短到能背下来，只讲下一步做什么。
+ * 返回空串时 DSH 会在渲染阶段丢掉整个 section，所以没看板的会话一分钱不花。
+ */
+const 看板引导 = `# dsh-zen
+
+这个项目有任务看板（\`.dsh-zen/\`）。开始工作前先 \`zen_list(view=ready)\` 取就绪队列。
+循环：\`zen_move(id, to=wip, role=implementer)\` 占用 → 干活 → \`zen_artifact\` 挂产物 →
+\`zen_accept\` 逐条勾验收 → \`zen_move(id, to=done)\`。写操作都带 role。
+\`zen_board\` / \`zen_stats\` 是人读的，不进 agent 主路径。
+何时该建任务、报错码各是什么意思：加载 dsh-zen 技能。`
+
+/** 从 agent 同步取工作目录；拿不到就当没有看板。 */
+export function 会话工作目录(agent) {
+  try { return agent?.session?.header?.cwd } catch { return undefined }
+}
+
+/** 不论有没有看板都露出来的两个工具：没有它们就没法建看板，也没法读数据模型。 */
+const 常驻工具 = new Set(['init', 'schema'])
+
+/**
+ * 步骤级准入：没有看板的项目不暴露其余工具，省下 20 多个 schema 的常驻成本。
+ * 缺 workingDirectory 服务时全部可见。
+ */
+function 准入条件(ctx) {
+  return async ({ agent, signal }) => {
+    if (agent === undefined) return false
+    let 工作目录 = undefined
+    try { 工作目录 = ctx.get('workingDirectory') } catch { 工作目录 = undefined }
+    if (工作目录 === undefined || typeof 工作目录.ensure !== 'function') return true
+    try { return 有看板(await 工作目录.ensure(agent, signal)) } catch { return false }
+  }
+}
+
 export function apply(ctx, config = {}) {
   const bin = 定位二进制(config)
+  const 准入 = 准入条件(ctx)
   for (const tool of TOOLS) {
+    const 选项 = 常驻工具.has(tool.name) ? {} : { when: 准入 }
     ctx.effect(() => ctx.tools.register({
       name: `zen_${tool.name}`,
       description: tool.description,
@@ -417,8 +505,32 @@ export function apply(ctx, config = {}) {
         if (!result.ok) throw new Error(`[${result.code}] ${result.message}`)
         return result.data
       },
-    }))
+    }, 选项))
   }
+
+  // 有看板才注入这段：没有看板时文本为空串，section 在渲染阶段被丢弃。
+  ctx.inject(['systemPrompt'], (inner) => {
+    try {
+      const prompt = inner.get('systemPrompt')
+      inner.effect(() => prompt.section({
+        name: 'tool:dsh-zen',
+        order: 3550,
+        interpolate: false,
+        text: ({ agent }) => (有看板(会话工作目录(agent)) ? 看板引导 : ''),
+      }), 'dsh-zen: prompt')
+    } catch (e) {
+      console.warn('[dsh-zen] 系统提示没挂上：', e && e.message ? e.message : e)
+    }
+  })
+
+  // 指南按需加载：catalog 里只留一行，正文由模型显式取用，不常驻系统提示。
+  ctx.inject(['skills'], (inner) => {
+    try {
+      inner.effect(() => inner.skills.register(技能), 'dsh-zen: skill')
+    } catch (e) {
+      console.warn('[dsh-zen] 技能注册失败：', e && e.message ? e.message : e)
+    }
+  })
 
   // 面板数据：宿主现跑内核取数，浏览器只收 JSON。磁盘上不留任何中间文件。
   ctx.inject(['webServer'], (inner) => {
@@ -437,22 +549,6 @@ export function apply(ctx, config = {}) {
         }
         try {
           const query = new URL(req.url ?? '/', 'http://127.0.0.1').searchParams
-          // 诊断通道：客户端把「我加载了吗/注册成了吗」写进本地日志，省去靠人贴控制台
-          const 诊断 = query.get('diag')
-          if (诊断 !== null) {
-            try {
-              const { appendFileSync, statSync, mkdirSync, writeFileSync } = await import('node:fs')
-              const { join } = await import('node:path')
-              const 目录 = join(process.cwd(), '.dsh-zen')
-              mkdirSync(目录, { recursive: true })
-              const 文件 = join(目录, 'diag.log')
-              try { if (statSync(文件).size > 200_000) writeFileSync(文件, '') } catch {}
-              appendFileSync(文件, 诊断.slice(0, 2000) + '\n')
-            } catch {}
-            res.writeHead(204, { 'cache-control': 'no-store' })
-            res.end()
-            return
-          }
           const payload = await 读看板(bin, query.get('root') ?? undefined)
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
           res.end(JSON.stringify(payload))

@@ -21,7 +21,8 @@ use crate::store::{self, Event, Store};
 /// 一次命令的输入。CLI 与 NDJSON 两个入口都归一到它。
 #[derive(Debug)]
 pub enum Invocation {
-    Init { root: PathBuf },
+    /// `root` 显式给出时必须是仓库根；缺省从当前目录向上找。
+    Init { root: Option<PathBuf> },
     /// 其余命令都要先定位数据目录。
     Data(DataCommand),
 }
@@ -95,7 +96,7 @@ pub type Report = serde_json::Value;
 
 pub fn dispatch(inv: Invocation) -> Result<Report> {
     match inv {
-        Invocation::Init { root } => init(&root),
+        Invocation::Init { root } => init(root.as_deref()),
         Invocation::Data(cmd) => {
             let data_dir = config::find_data_dir(&std::env::current_dir()?)?;
             run(&data_dir, cmd)
@@ -1324,14 +1325,17 @@ fn to_report<T: serde::Serialize>(value: &T) -> Result<Report> {
 }
 
 /// 建立数据目录、默认配置与空库。已存在的文件跳过。
-fn init(root: &PathBuf) -> Result<Report> {
-    let written = config::write_defaults(root)?;
+fn init(requested: Option<&Path>) -> Result<Report> {
+    let cwd = std::env::current_dir()?;
+    let root = config::init_root(requested, &cwd)?;
+    let written = config::write_defaults(&root)?;
     let data_dir = root.join(config::DATA_DIR);
     let db_path = data_dir.join(config::DB_FILE);
     let store = Store::open(&db_path)?;
     store::init_schema(&store)?;
     store.health()?;
     Ok(json!({
+        "root": root.display().to_string(),
         "data_dir": data_dir.display().to_string(),
         "db": db_path.display().to_string(),
         "written": written
@@ -1619,7 +1623,8 @@ mod tests {
     fn 临时仓库(tag: &str) -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!("dsh-zen-cmd-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        init(&root).unwrap();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        init(Some(&root)).unwrap();
         root.join(config::DATA_DIR)
     }
 

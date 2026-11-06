@@ -1,7 +1,7 @@
 # dsh-zen
 
 给 agent 用的项目管理系统，以 **DSH 插件**形态交付：模型通过 25 个 `zen_*` 内置工具
-管理一个仓库里的计划、任务、租约与复盘。无守护进程、无网络，数据在本地 SQLite 里。
+管理一个项目里的计划、任务、租约与复盘。无守护进程、无网络，数据在本地 SQLite 里。
 
 ## 两层结构
 
@@ -35,8 +35,10 @@ tools/build-plugin.sh        # 缺省 --release；--debug 用调试产物
 
 ## 数据目录
 
-`.dsh-zen/` 从当前目录向上查找，遇到含 `.git` 的仓库根即停。`zen.zendb*`（SQLite 库本身）、
-`diag.log` 与 `export/` 里的快照都按 `.gitignore` 处理，只有四份 toml 配置入库。
+`.dsh-zen/` 只会由 `zen_init` 创建，项目根由调用方显式给出，与 IDE 打开项目的方式一致。
+祖先目录里已有看板时拒绝，一个项目一个看板；落点回显在结果的 `root` 字段。其余命令只读不建，
+未初始化的项目直接报 `config`。`zen.zendb*`（SQLite 库本身）与 `export/` 里的快照按 `.gitignore` 处理，只有四份
+toml 配置入库。
 
 ## 工具面
 
@@ -48,12 +50,21 @@ tools/build-plugin.sh        # 缺省 --release；--debug 用调试产物
 | 凭据 | `zen_accept` `zen_artifact` `zen_comment` |
 | 协作 | `zen_link` `zen_report` `zen_review` |
 | 维护与导入 | `zen_check` `zen_migrate` `zen_update` `zen_plan` `zen_log` `zen_import` |
+
+插件另注册一个 `dsh-zen` 技能：catalog 里只占一行（名字 + 何时用），工作流正文由模型需要时
+自己加载，不写进系统提示——不需要看板的会话只花那一行。
+
+工具本身也按需暴露：`zen_init` 与 `zen_schema` 常驻（没有它们就没法建看板、也读不到数据模型），
+其余 23 个只在项目根存在 `.dsh-zen/` 时进入工具清单——走 DSH 的步骤级准入 `when`，每步判一次。
+
+引导同理：一段系统提示按同一规则判空，没有看板的项目返回空串、被渲染阶段丢弃；有看板才给
+“先 `zen_list(view=ready)`、六步循环、人读命令留给人”的摘要。
 | 人读 | `zen_board` `zen_stats` |
 
 ## 开发
 
 ```bash
-bash tools/ci.sh             # 三道闸门一起跑（CI 与本地共用这一条）
+bash tools/ci.sh             # 四道闸门一起跑：单测 / 发布构建 / 插件对账 / 规格（CI 与本地共用这一条）
 ```
 
 单独跑：

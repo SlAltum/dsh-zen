@@ -286,6 +286,48 @@ impl Roles {
     }
 }
 
+/// `init` 的落点：调用方显式给的项目根。
+///
+/// 这是 IDE 的模型——你打开哪个目录，哪个就是项目；我们不去看 `.git`、不从当前目录推。
+/// 祖先目录里已有 `.dsh-zen` 时拒绝，保证一个项目一个看板。
+pub fn init_root(requested: Option<&Path>, cwd: &Path) -> Result<PathBuf> {
+    let path = requested.ok_or_else(|| ZenError::Config {
+        file: DATA_DIR.into(),
+        why: "init 需要显式的项目根：给 root（命令行用 --root）".into(),
+    })?;
+    let abs = std::path::absolute(if path.is_absolute() { path.to_path_buf() } else { cwd.join(path) })
+        .unwrap_or_else(|_| path.to_path_buf());
+    if !abs.is_dir() {
+        return Err(ZenError::Config {
+            file: DATA_DIR.into(),
+            why: format!("{} 不是目录", abs.display()),
+        });
+    }
+    if let Some(上层) = 祖先看板(&abs) {
+        return Err(ZenError::Config {
+            file: DATA_DIR.into(),
+            why: format!(
+                "{} 已经存在；一个项目只允许一个看板，请改用它的项目根",
+                上层.display()
+            ),
+        });
+    }
+    Ok(abs)
+}
+
+/// 从 `start` 的父目录向上找已有的 `.dsh-zen`。
+fn 祖先看板(start: &Path) -> Option<PathBuf> {
+    let mut cur = start.parent();
+    while let Some(dir) = cur {
+        let candidate = dir.join(DATA_DIR);
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+        cur = dir.parent();
+    }
+    None
+}
+
 /// 从 `start` 向上查找数据目录。跨过仓库根即报错，避免误写到父仓库。
 pub fn find_data_dir(start: &Path) -> Result<PathBuf> {
     let mut cur = Some(start);
@@ -378,6 +420,34 @@ mod tests {
         write_defaults(&root).unwrap();
         let cfg = load(&root.join(DATA_DIR)).unwrap();
         (root, cfg)
+    }
+
+    /// init 只认调用方显式给的项目根；祖先已有看板则拒绝。
+    #[test]
+    fn init_只认显式项目根() {
+        let 根 = std::env::temp_dir().join(format!("dsh-zen-init-root-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&根);
+        fs::create_dir_all(根.join("a").join("b")).unwrap();
+
+        assert_eq!(init_root(Some(&根), &根).unwrap(), 根, "显式给的项目根原样使用");
+        assert_eq!(init_root(Some(&根.join("a").join("b")), &根).unwrap(), 根.join("a").join("b"), "子目录原样作为项目根");
+
+        let 没给 = init_root(None, &根).unwrap_err();
+        assert_eq!(没给.code(), "config");
+        assert!(没给.to_string().contains("显式"), "要说清缺什么：{没给}");
+
+        let 缺 = 根.join("不存在");
+        assert_eq!(init_root(Some(&缺), &根).unwrap_err().code(), "config");
+
+        // 祖先已有看板：拒绝
+        fs::create_dir_all(根.join(DATA_DIR)).unwrap();
+        let 嵌套 = init_root(Some(&根.join("a")), &根).unwrap_err();
+        assert_eq!(嵌套.code(), "config");
+        assert!(嵌套.to_string().contains(DATA_DIR), "要说清冲突在哪：{嵌套}");
+        // 同一个目录重复 init 仍然放行（幂等修复）
+        assert_eq!(init_root(Some(&根), &根).unwrap(), 根);
+
+        let _ = fs::remove_dir_all(&根);
     }
 
     #[test]

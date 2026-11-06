@@ -4,14 +4,6 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const h = React.createElement
 
-    /** 通过 /zen/board 诊断通道回报自己在浏览器里的状态；失败静默。 */
-    function 诊断(事件, 详情) {
-      try {
-        fetch('/zen/board?diag=' + encodeURIComponent(JSON.stringify({ 事件, 详情: 详情 ?? null, 时间: new Date().toISOString() })), { keepalive: true }).catch(() => {})
-      } catch { /* 诊断失败不影响功能 */ }
-    }
-    try { 诊断('module-loaded', { href: String((globalThis.location && globalThis.location.href) ?? '').slice(0, 120) }) } catch {}
-
     const KIND = 'dsh-zen.board'
     /** 由 ctx.inject(['remote.workspaceFiles']) 填：命名空间必须单独注入，否则取 remote.workspaceFiles 会抛。 */
     let 文件远端 = undefined
@@ -248,7 +240,6 @@ window.__ModuleLoader__.load({
     let 上次地址 = undefined
     function BoardPanel(props) {
       if (props && typeof props.resourceAddress === 'string' && props.resourceAddress !== '') 上次地址 = props.resourceAddress
-      诊断('body-render', { 地址: props && props.resourceAddress, 有远端: 文件远端 !== undefined })
       const [state, load] = useBoard(文件远端, (props && props.resourceAddress) ?? 上次地址)
       return h(BoardView, { state, onRefresh: load })
     }
@@ -264,14 +255,12 @@ window.__ModuleLoader__.load({
       // 它 provide 了 ctx.documentPreviews。渲染器在自己的 effect 里注册元数据，再等槽位挂 body。
       inject: ['slots', 'documentPreviews'],
       apply(ctx) {
-        诊断('apply', { inject: ['slots', 'documentPreviews'] })
         // remote.workspaceFiles 是独立命名空间，必须按全名注入（预览包自己也这么写）。
         // 缺了只影响仓库根解析，不影响插件激活，所以走 ctx.inject 而不是 module inject。
         try {
           ctx.inject(['remote.workspaceFiles'], (inner) => {
             try {
               文件远端 = inner.get('remote.workspaceFiles')
-              诊断('workspaceFiles-injected')
             } catch (e) { console.warn('[dsh-zen] remote.workspaceFiles 取值失败：', e && e.message ? e.message : e) }
           })
         } catch (e) { console.warn('[dsh-zen] ctx.inject 不可用：', e && e.message ? e.message : e) }
@@ -285,10 +274,8 @@ window.__ModuleLoader__.load({
             loading: 'bytes-complete',
             wrap: false,
           }), 'dsh-zen: board viewer')
-          诊断('viewer-registered')
         } catch (e) {
           console.warn('[dsh-zen] 看板预览注册失败：', e && e.message ? e.message : e)
-          诊断('register-failed', String(e && e.message ? e.message : e))
         }
         try {
           ctx.slots.inject('sidebar.right.tab.document', () => ctx.slots.register({

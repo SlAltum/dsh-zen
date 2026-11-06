@@ -30,8 +30,8 @@ struct Cli {
 enum Cmd {
     /// 建立 .dsh-zen 目录、默认配置与空库
     Init {
-        /// 仓库根，默认当前目录
-        #[arg(long, default_value = ".")]
+        /// 项目根目录（显式指定，不做猜测）
+        #[arg(long)]
         root: PathBuf,
     },
     /// 建计划或任务
@@ -290,7 +290,7 @@ enum Cmd {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let outcome = match cli.command {
-        Cmd::Init { root } => commands::dispatch(Invocation::Init { root }),
+        Cmd::Init { root } => commands::dispatch(Invocation::Init { root: Some(root) }),
         Cmd::Create { title, plan, kind, acceptance, description, external_key, field, role, actor } => {
             match role_from(&role) {
                 Ok(role) => match 解析字段(&field) {
@@ -467,14 +467,9 @@ fn handle_rpc_line(line: &str) -> serde_json::Value {
     let args = req.get("args").cloned().unwrap_or_else(|| json!({}));
 
     let outcome = match tool.strip_prefix("zen_").unwrap_or(tool) {
-        "init" => {
-            let root = args
-                .get("root")
-                .and_then(|v| v.as_str())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("."));
-            commands::dispatch(Invocation::Init { root })
-        }
+        "init" => commands::dispatch(Invocation::Init {
+            root: args.get("root").and_then(|v| v.as_str()).map(PathBuf::from),
+        }),
         "create" => rpc_create(&args),
         "list" => commands::dispatch(Invocation::Data(DataCommand::List(ListArgs {
             view: owned(&args, "view"),
