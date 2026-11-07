@@ -16,3 +16,6 @@ plugin/bin/
 
 # 误展开的系统变量目录（历史误提交过一次 Windows 缓存库）
 /%SystemDrive%/
+
+# 非交互 shell 里 git 读凭据时，提示文本会落到当前目录的控制台设备 CON
+/CON

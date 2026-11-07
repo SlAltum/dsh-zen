@@ -440,6 +440,7 @@ const 技能 = {
   name: 'dsh-zen',
   description: '用 zen_* 工具管理本项目的任务看板：计划、任务、租约、验收、复盘。',
   whenToUse: '项目根存在 .dsh-zen/ 时；或用户要求跨会话跟踪任务、计划、验收时。',
+  source: 'dsh-zen',
   content: 技能正文,
 }
 
@@ -463,10 +464,12 @@ export function 有看板(cwd) {
 const 看板引导 = `# dsh-zen
 
 这个项目有任务看板（\`.dsh-zen/\`）。开始工作前先 \`zen_list(view=ready)\` 取就绪队列。
+执行整张计划：\`zen_show(计划号)\` 一次返回全部任务行（依赖、验收未勾数、正文长度），按行开工即可。
+看板只经 \`zen_*\` 工具读写；\`.dsh-zen/zen.zendb\` 是内核库文件，直读它拿不到工具面才有的校验与规则。
 循环：\`zen_move(id, to=wip, role=implementer)\` 占用 → 干活 → \`zen_artifact\` 挂产物 →
 \`zen_accept\` 逐条勾验收 → \`zen_move(id, to=done)\`。写操作都带 role。
 \`zen_board\` / \`zen_stats\` 是人读的，不进 agent 主路径。
-何时该建任务、报错码各是什么意思：加载 dsh-zen 技能。`
+何时该建任务、报错码各是什么意思：\`zen_schema\` / \`zen_workflow\` / \`zen_roles\` 是常驻的自描述工具，随时可查。`
 
 /** 从 agent 同步取工作目录；拿不到就当没有看板。 */
 export function 会话工作目录(agent) {

@@ -602,6 +602,17 @@ fn check(data_dir: &Path) -> Result<Report> {
         }
     };
 
+    // 残留库文件：数据目录里除 zen.zendb* 外的 *.db 只会让读者二选一，指明它是历史残留
+    if let Ok(entries) = std::fs::read_dir(data_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.ends_with(".db") {
+                记("structure", name.into_owned(), "历史残留库文件：内核只认 zen.zendb，确认不再被引用后可删".into());
+            }
+        }
+    }
+
     let store = Store::open(&data_dir.join(config::DB_FILE))?;
     store::init_schema(&store)?;
     let conn = store.conn();
@@ -1317,7 +1328,35 @@ fn show_plan(conn: &rusqlite::Connection, key: &str, section: Option<&str>) -> R
         };
         return Ok(json!({ "id": plan.id, "title": plan.title, "section": section, "content": content }));
     }
-    to_report(&plan)
+    let mut report = to_report(&plan)?;
+    report["tasks"] = json!(计划任务行(conn, &plan.id)?);
+    Ok(report)
+}
+
+/// 计划的任务行：执行一张计划的最小读取面。依赖、验收未勾数、正文长度都在一行里，
+/// 装配整张计划因此只要一次调用；正文按任务开工时再经 zen_show / zen_context 取。
+fn 计划任务行(conn: &rusqlite::Connection, plan_id: &str) -> Result<Vec<serde_json::Value>> {
+    let links = store::load_links(conn)?;
+    store::load_issues(conn)?
+        .iter()
+        .filter(|i| i.plan.as_deref() == Some(plan_id))
+        .map(|issue| {
+            // ponytail: 验收逐任务一查，列表上限 40 行内没问题；行数过千再换 JOIN 聚合
+            let acceptance = store::load_acceptance(conn, &issue.id)?;
+            Ok(json!({
+                "id": issue.id,
+                "title": issue.title,
+                "status": issue.status.as_str(),
+                "priority": issue.priority,
+                "deps": links.iter()
+                    .filter(|l| l.kind == domain::LinkKind::Blocks && l.to == issue.id)
+                    .map(|l| l.from.as_str())
+                    .collect::<Vec<_>>(),
+                "acceptance_open": acceptance.iter().filter(|a| a.checked_at.is_none()).count(),
+                "description_chars": issue.description.chars().count(),
+            }))
+        })
+        .collect()
 }
 
 fn to_report<T: serde::Serialize>(value: &T) -> Result<Report> {
@@ -1787,6 +1826,22 @@ mod tests {
         let 都没有 = show(&dir, "ZEN-99", None).unwrap_err();
         assert_eq!(都没有.code(), "not_found");
         assert!(都没有.to_string().contains("任务或计划"), "两边都没有时要说清楚：{都没有}");
+
+        // 计划详情带任务行：装配整张计划一次调用，正文开工时再取
+        let id2 = create(&dir, &任务参("乙", Some("P2 收尾"))).unwrap()["id"].as_str().unwrap().to_string();
+        let 验收 = vec!["跑通".to_string(), "复审".to_string()];
+        let id3 = create(&dir, &CreateArgs { acceptance: &验收, description: Some("目标与验证方式写在正文里"), ..任务参("丙", Some("P2 收尾")) }).unwrap()["id"].as_str().unwrap().to_string();
+        link_cmd(&dir, &LinkArgs { from: &id, to: &id2, kind: "blocks", role: Role::Lead, actor: "a@b" }).unwrap();
+        let 计划 = show(&dir, plan_id, None).unwrap();
+        let 行 = 计划["tasks"].as_array().unwrap();
+        assert_eq!(行.len(), 3, "计划下的任务都在：{计划}");
+        let 甲 = 行.iter().find(|r| r["id"] == *id).unwrap();
+        let 丙 = 行.iter().find(|r| r["id"] == id3).unwrap();
+        assert_eq!(丙["acceptance_open"], 2);
+        assert_eq!(甲["acceptance_open"], 0, "没写验收就是 0，不是 null");
+        assert_eq!(丙["description_chars"], 12, "正文长度可判断去哪取全文");
+        assert!(行.iter().any(|r| r["deps"].as_array().unwrap().contains(&json!(id))), "blocks 依赖要出现在被阻塞方");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2156,6 +2211,18 @@ mod tests {
         // 只报不修：坏数据仍在
         let 仍坏: String = store.conn().query_row("SELECT status FROM issue WHERE id = ?1", [&id], |r| r.get(0)).unwrap();
         assert_eq!(仍坏, "doing", "check 不改数据");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn 残留库文件被指认() {
+        let dir = 临时仓库("check-stray");
+        std::fs::write(dir.join("zen.db"), b"").unwrap();
+        let 报告 = check(&dir).unwrap();
+        let 命中 = 报告["findings"].as_array().unwrap().iter()
+            .find(|f| f["target"] == "zen.db").expect("残留库要报出来");
+        assert_eq!(命中["kind"], "structure");
+        assert!(命中["detail"].as_str().unwrap().contains("zen.zendb"), "要指认真实库文件名：{命中}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
