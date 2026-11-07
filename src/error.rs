@@ -62,7 +62,7 @@ impl fmt::Display for ZenError {
                 write!(f, "并发冲突：期望 {expected}，实际 {actual}")
             }
             ZenError::Validation { field, why } => write!(f, "字段 {field} 不合法：{why}"),
-            ZenError::Config { file, why } => write!(f, "配置 {file} 不合法：{why}"),
+            ZenError::Config { file, why } => write!(f, "配置 {file}：{why}"),
             ZenError::Retryable { why } => write!(f, "可重试：{why}"),
             ZenError::NotFound { what } => write!(f, "找不到 {what}"),
             ZenError::Io(why) => write!(f, "IO 错误：{why}"),

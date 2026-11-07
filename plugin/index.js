@@ -46,9 +46,9 @@ function 定位二进制(config) {
  * 向内核发一条 NDJSON 请求并读回一行结果。
  * 内核的错误也按行返回，所以这里只把「进程起不来」当作传输失败。
  */
-function callZen(bin, tool, args, signal) {
+function callZen(bin, tool, args, signal, cwd) {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, ['rpc'], { stdio: ['pipe', 'pipe', 'pipe'] })
+    const child = spawn(bin, ['rpc'], { stdio: ['pipe', 'pipe', 'pipe'], ...(cwd === undefined ? {} : { cwd }) })
 
     let out = ''
     let err = ''
@@ -113,7 +113,7 @@ const 操作者说明 = '操作者身份，缺省按 ZEN_ACTOR → git 邮箱 �
 const TOOLS = [
   {
     name: 'init',
-    description: '在指定的项目根建立 .dsh-zen 数据目录、四份默认配置与空库。这是唯一会创建 .dsh-zen 的动作；已存在的文件跳过，不覆盖。首次使用前调用一次。',
+    description: '在指定的项目根建立 .dsh-zen 数据目录、四份默认配置与空库。这是唯一会创建 .dsh-zen 的动作；已存在的文件跳过，不覆盖。首次使用前调用一次。其余 zen_* 调用按会话工作目录向上找 .dsh-zen；返回带 warning 时先将会话工作目录切到 root 再继续。',
     params: { root: { type: 'string', required: true, description: '项目根目录的绝对路径（或相对当前目录）。必填；祖先目录已有看板时拒绝。' } },
   },
   {
@@ -413,7 +413,11 @@ const 技能正文 = `# dsh-zen 任务看板
 
 ## 没有 \`.dsh-zen/\` 时
 
-要做看板时才创建：\`zen_init(root)\`。**项目根显式给**，与 IDE 打开项目一致；祖先目录已有看板时拒绝。结果里的 \`root\` 是实际落点。
+要做看板时才创建：\`zen_init(root)\`。**项目根显式给**，与 IDE 打开项目一致；祖先目录已有看板时拒绝。结果里的 \`root\` 是实际落点；带 \`warning\` 时说明当前工作目录解析不到它，先 \`working_directory(cd=root)\` 再继续。
+
+## 报 config 找不到 \`.dsh-zen\` 时
+
+数据目录按**会话工作目录**向上解析（跨过仓库根即停）。先 \`working_directory\` 确认会话目录在项目内；不在就切过去，目录对但仍报错才轮到 \`zen_init\`。
 
 ## 一次完整循环
 
@@ -488,6 +492,7 @@ function 准入条件(ctx) {
 
 export function apply(ctx, config = {}) {
   const bin = 定位二进制(config)
+  const 工作目录 = (() => { try { return ctx.get('workingDirectory') } catch { return undefined } })()
   const 准入 = 准入条件(ctx)
   for (const tool of TOOLS) {
     const 选项 = 常驻工具.has(tool.name) ? {} : { when: 准入 }
@@ -501,7 +506,12 @@ export function apply(ctx, config = {}) {
       },
       timeoutMs: CALL_TIMEOUT_MS,
       async execute(args, exec) {
-        const result = await callZen(bin, tool.name, args ?? {}, exec.signal)
+        // 配置根跟会话走：sidecar 从会话工作目录向上找 .dsh-zen，而不是从插件进程目录找。
+        let cwd
+        if (工作目录 !== undefined && typeof 工作目录.ensure === 'function' && exec.agent !== undefined) {
+          try { cwd = await 工作目录.ensure(exec.agent, exec.signal) } catch { cwd = undefined }
+        }
+        const result = await callZen(bin, tool.name, args ?? {}, exec.signal, cwd)
         if (!result.ok) throw new Error(`[${result.code}] ${result.message}`)
         return result.data
       },

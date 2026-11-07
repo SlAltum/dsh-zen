@@ -1334,6 +1334,15 @@ fn init(requested: Option<&Path>) -> Result<Report> {
     let store = Store::open(&db_path)?;
     store::init_schema(&store)?;
     store.health()?;
+    // init root 与当前工作目录解析出的看板不一致时，后续调用会找不到这块看板——当场说明。
+    let warning = match config::find_data_dir(&cwd) {
+        Ok(found) if found == data_dir => None,
+        _ => Some(format!(
+            "当前工作目录 {} 解析不到这块看板；后续 zen_* 调用按会话工作目录向上找 .dsh-zen，请先将会话工作目录切到 {}",
+            cwd.display(),
+            root.display()
+        )),
+    };
     Ok(json!({
         "root": root.display().to_string(),
         "data_dir": data_dir.display().to_string(),
@@ -1342,6 +1351,7 @@ fn init(requested: Option<&Path>) -> Result<Report> {
             .iter()
             .map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default())
             .collect::<Vec<_>>(),
+        "warning": warning,
     }))
 }
 

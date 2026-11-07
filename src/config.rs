@@ -343,7 +343,10 @@ pub fn find_data_dir(start: &Path) -> Result<PathBuf> {
     }
     Err(ZenError::Config {
         file: DATA_DIR.into(),
-        why: "未找到，先运行 init".into(),
+        why: format!(
+            "从 {} 向上未找到 .dsh-zen（跨过仓库根即停）。请先在项目根运行 zen_init(root=<项目根>)，或将会话工作目录切到已建看板的项目",
+            start.display()
+        ),
     })
 }
 
@@ -354,7 +357,11 @@ pub fn load(data_dir: &Path) -> Result<Config> {
         let path = data_dir.join(name);
         let text = fs::read_to_string(&path).map_err(|e| ZenError::Config {
             file: name.into(),
-            why: e.to_string(),
+            why: if e.kind() == std::io::ErrorKind::NotFound {
+                format!("配置缺失：先运行 zen_init(root=<项目根>) 生成默认配置（数据目录 {}）", data_dir.display())
+            } else {
+                e.to_string()
+            },
         })?;
         let value: toml::Table = toml::from_str(&text).map_err(|e| ZenError::Config {
             file: name.into(),
@@ -422,10 +429,32 @@ mod tests {
         (root, cfg)
     }
 
+    /// 找不到看板的报错要带起始目录与处置指引，让使用者能自己定位。
+    #[test]
+    fn 找不到看板时报起始目录() {
+        let 根 = std::env::temp_dir().join(format!("dsh-zen-find-none-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&根);
+        let 深 = 根.join("a").join("b");
+        fs::create_dir_all(&深).unwrap();
+
+        let err = find_data_dir(&深).unwrap_err();
+        assert_eq!(err.code(), "config");
+        let msg = err.to_string();
+        assert!(msg.contains("a") && msg.contains("b"), "报错要带起始路径：{msg}");
+        assert!(msg.contains("zen_init"), "报错要给下一步：{msg}");
+
+        // 配置缺失与解析失败分开报：缺文件指向 zen_init，不是 os error 原文。
+        write_defaults(&根).unwrap();
+        fs::remove_file(根.join(DATA_DIR).join("fields.toml")).unwrap();
+        let err = load(&根.join(DATA_DIR)).unwrap_err();
+        assert!(err.to_string().contains("zen_init"), "缺配置要指向 init：{err}");
+
+        let _ = fs::remove_dir_all(&根);
+    }
+
     /// init 只认调用方显式给的项目根；祖先已有看板则拒绝。
     #[test]
-    fn init_只认显式项目根() {
-        let 根 = std::env::temp_dir().join(format!("dsh-zen-init-root-{}", std::process::id()));
+    fn init_只认显式项目根() {        let 根 = std::env::temp_dir().join(format!("dsh-zen-init-root-{}", std::process::id()));
         let _ = fs::remove_dir_all(&根);
         fs::create_dir_all(根.join("a").join("b")).unwrap();
 
